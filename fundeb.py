@@ -72,30 +72,71 @@ html, body, [class*="css"] {
 """, unsafe_allow_html=True)
 
 # ================================================================
-# BLOCO 2 – CARREGAMENTO E TRATAMENTO DOS DADOS
+# BLOCO 2 – CARREGAMENTO UNIVERSAL DE DADOS (COMPLETO E CORRETO)
 # ================================================================
 @st.cache_data(show_spinner=True)
 def carregar_dados():
-    caminho = "data/Levantamento LOA municípios ES - 2020 a 2025.xlsx"
-    df = pd.read_excel(caminho, sheet_name="Planilha1")
-    # Aba complementar com informações de habilitação ao VAAT (2026)
-    df_vaat_hab = pd.read_excel(caminho, sheet_name="Habilitação VAAT 2026")
 
-    # Padroniza nomes de colunas principais
+    import os
+    import pandas as pd
+    import numpy as np
+
+    # Nome exato do arquivo
+    nome_arquivo = "Levantamento LOA municípios ES - 2020 a 2025.xlsx"
+
+    # Tenta localizar em caminhos relativos
+    caminhos_possiveis = [
+        nome_arquivo,
+        os.path.join("data", nome_arquivo),
+        os.path.join("dados", nome_arquivo),
+        os.path.join("Data", nome_arquivo),
+        os.path.join("Dados", nome_arquivo),
+    ]
+
+    caminho_encontrado = None
+    for c in caminhos_possiveis:
+        if os.path.exists(c):
+            caminho_encontrado = c
+            break
+
+    if caminho_encontrado is None:
+        st.error(f"""
+        ❌ Arquivo não encontrado.
+
+        Coloque o arquivo:
+        **{nome_arquivo}**
+
+        ➤ na mesma pasta do *fundeb.py*  
+        **OU**  
+        ➤ dentro da pasta **data/** ou **dados/**.
+        """)
+        st.stop()
+
+    # Carrega aba principal
+    df = pd.read_excel(caminho_encontrado, sheet_name="Planilha1")
+
+    # Se existir aba de habilitação VAAT 2026, carrega
+    abas = pd.ExcelFile(caminho_encontrado).sheet_names
+    if "Habilitação VAAT 2026" in abas:
+        df_vaat_hab = pd.read_excel(caminho_encontrado, sheet_name="Habilitação VAAT 2026")
+    else:
+        df_vaat_hab = pd.DataFrame()
+
+    # ------------------------------------------------------------
+    # Padronização de colunas
+    # ------------------------------------------------------------
     df.columns = [c.strip() for c in df.columns]
 
-    # Coerção numérica cuidadosa
     def _coerce_numeric(col):
         if pd.api.types.is_numeric_dtype(col):
             return col
-        col = col.astype(str).str.replace(".", "", regex=False)
+        col = col.astype(str)
+        col = col.str.replace(".", "", regex=False)
         col = col.str.replace(",", ".", regex=False)
-        col = col.replace(
-            {"-": np.nan, "--": np.nan, "—": np.nan,
-             "nan": np.nan, "None": np.nan, "": np.nan}
-        )
+        col = col.replace({"-": np.nan, "--": np.nan, "nan": np.nan, "None": np.nan, "": np.nan})
         return pd.to_numeric(col, errors="coerce")
 
+    # Lista das colunas numéricas
     num_cols = [
         "Orçamento",
         "Despesa Educação",
@@ -111,61 +152,63 @@ def carregar_dados():
         "Complementação da União-VAAR (R$)",
         "VAAT Mínimo Brasil",
     ]
+
     for c in num_cols:
         if c in df.columns:
             df[c] = _coerce_numeric(df[c])
 
-    # Ajusta tipos básicos
+    # Coerção para ANO e Código IBGE
     if "ANO" in df.columns:
         df["ANO"] = pd.to_numeric(df["ANO"], errors="coerce").astype("Int64")
     if "Código IBGE" in df.columns:
         df["Código IBGE"] = pd.to_numeric(df["Código IBGE"], errors="coerce").astype("Int64")
 
-    # Cria colunas derivadas
-    df["Fundeb_Base"] = df.get("Receita total do Fundeb Realizada")
-    df["Compl_VAAF"] = df.get("VAAF")
-    df["Compl_VAAT"] = df.get("Complementação da União-VAAT (art. 16, VI) (R$)")
-    df["Compl_VAAR"] = df.get("Complementação da União-VAAR (R$)")
+    # ------------------------------------------------------------
+    # Criação das colunas derivadas oficiais
+    # ------------------------------------------------------------
+    df["Fundeb_Base"] = df.get("Receita total do Fundeb Realizada", 0)
+    df["Compl_VAAF"] = df.get("VAAF", 0).fillna(0)
+    df["Compl_VAAT"] = df.get("Complementação da União-VAAT (art. 16, VI) (R$)", 0).fillna(0)
+    df["Compl_VAAR"] = df.get("Complementação da União-VAAR (R$)", 0).fillna(0)
 
-    for c in ["Fundeb_Base", "Compl_VAAF", "Compl_VAAT", "Compl_VAAR"]:
-        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+    df["Fundeb_Total"] = (
+        df["Fundeb_Base"] +
+        df["Compl_VAAF"] +
+        df["Compl_VAAT"] +
+        df["Compl_VAAR"]
+    )
 
-    df["Fundeb_Total"] = df["Fundeb_Base"] + df["Compl_VAAF"] + df["Compl_VAAT"] + df["Compl_VAAR"]
+    df["ICMS_Educacional"] = df.get("ICMS Educacional", 0).fillna(0)
+    df["ICMS_CotaParte"] = df.get("Cota-parte ICMS Realizada", np.nan)
 
-    df["ICMS_Educacional"] = pd.to_numeric(df.get("ICMS Educacional"), errors="coerce").fillna(0)
-    df["ICMS_CotaParte"] = pd.to_numeric(df.get("Cota-parte ICMS Realizada"), errors="coerce")
+    df["Orcamento_Total"] = df.get("Orçamento", np.nan)
+    df["Despesa_Educacao"] = df.get("Despesa Educação", np.nan)
 
-    df["Orcamento_Total"] = pd.to_numeric(df.get("Orçamento"), errors="coerce")
-    df["Despesa_Educacao"] = pd.to_numeric(df.get("Despesa Educação"), errors="coerce")
-
+    # Receita ampliada
     df["Recursos_Educacao_Ampliados"] = df["Fundeb_Total"] + df["ICMS_Educacional"]
 
-    # Dependências percentuais
-    df["Dep_Fundeb_orcamento"] = np.where(
-        df["Orcamento_Total"] > 0,
-        df["Fundeb_Total"] / df["Orcamento_Total"],
-        np.nan,
-    )
-    df["Dep_Fundeb_despesa_educ"] = np.where(
-        df["Despesa_Educacao"] > 0,
-        df["Fundeb_Total"] / df["Despesa_Educacao"],
-        np.nan,
-    )
+    # Dependências relativas
+    df["Dep_Fundeb_orcamento"] = df["Fundeb_Total"] / df["Orcamento_Total"]
+    df["Dep_Fundeb_despesa_educ"] = df["Fundeb_Total"] / df["Despesa_Educacao"]
 
-    # Junta informação de habilitação ao VAAT 2026 (se necessário no futuro)
+    # Junta habilitação VAAT 2026, se existir
     if not df_vaat_hab.empty and "Código IBGE" in df_vaat_hab.columns:
         df_vaat_hab["Código IBGE"] = pd.to_numeric(df_vaat_hab["Código IBGE"], errors="coerce").astype("Int64")
         df = df.merge(
             df_vaat_hab[["Código IBGE", "Veficação  § 4º do art. 13 da  Lei nº 14.113/20"]],
             on="Código IBGE",
-            how="left",
-            suffixes=("", "_VAAT2026"),
+            how="left"
         )
-        df.rename(columns={"Veficação  § 4º do art. 13 da  Lei nº 14.113/20": "Status_VAAT_2026"}, inplace=True)
+        df.rename(
+            columns={"Veficação  § 4º do art. 13 da  Lei nº 14.113/20": "Status_VAAT_2026"},
+            inplace=True
+        )
 
     return df
 
+
 df = carregar_dados()
+
 
 # ================================================================
 # BLOCO 3 – SIDEBAR E NAVEGAÇÃO
