@@ -82,7 +82,7 @@ def carregar_dados():
     import numpy as np
 
     # Nome exato do arquivo
-    nome_arquivo = "Levantamento LOA municípios ES - 2020 a 2025.xlsx"
+    nome_arquivo = "loa.xlsx"
 
     # Tenta localizar em caminhos relativos
     caminhos_possiveis = [
@@ -768,3 +768,4 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+
