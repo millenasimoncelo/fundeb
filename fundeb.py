@@ -244,6 +244,11 @@ def carregar_mapa_es():
 df = carregar_dados()
 mapa_es = carregar_mapa_es()
 
+# Remove 2020 de todas as análises
+if "ANO" in df.columns:
+    df = df[df["ANO"].notna()]
+    df = df[df["ANO"] >= 2021]
+
 # Código IBGE como string (7 dígitos) para ligar com o mapa
 if "Código IBGE" in df.columns:
     df["Codigo_IBGE_str"] = (
@@ -285,7 +290,7 @@ df_ano = df[df["ANO"] == ano_sel].copy()
 # BLOCO 4 – SEÇÃO: VISÃO GERAL DOS RECURSOS
 # ================================================================
 if menu == "📊 Visão geral dos recursos":
-    st.title("📊 Visão geral dos recursos educacionais")
+    st.title(f"📊 Visão Geral dos Recursos Educacionais – Espírito Santo ({ano_sel})")
 
     if df_ano.empty:
         st.warning("Não há dados para o ano selecionado.")
@@ -305,21 +310,21 @@ if menu == "📊 Visão geral dos recursos":
         with c1:
             st.markdown(f"""
             <div class="big-card">
-                <h3>Fundeb base – {ano_sel}</h3>
+                <h3>Fundeb base</h3>
                 <h1 style='font-size:34px;margin-top:-4px;'>{formatar_reais(total_fundeb_base)}</h1>
             </div>
             """, unsafe_allow_html=True)
         with c2:
             st.markdown(f"""
             <div class="big-card">
-                <h3>Complementações (VAAF+VAAT+VAAR)</h3>
+                <h3>Complementações (VAAF + VAAT + VAAR)</h3>
                 <h1 style='font-size:34px;margin-top:-4px;'>{formatar_reais(total_compl)}</h1>
             </div>
             """, unsafe_allow_html=True)
         with c3:
             st.markdown(f"""
             <div class="big-card">
-                <h3>ICMS Educacional – {ano_sel}</h3>
+                <h3>ICMS Educacional</h3>
                 <h1 style='font-size:34px;margin-top:-4px;'>{formatar_reais(total_icms_educ)}</h1>
             </div>
             """, unsafe_allow_html=True)
@@ -341,7 +346,7 @@ if menu == "📊 Visão geral dos recursos":
             df.groupby("ANO", as_index=False)
             .agg(
                 Fundeb_Base=("Fundeb_Base", "sum"),
-                Complementacoes=("Compl_VAAF", "sum"),
+                Compl_VAAF=("Compl_VAAF", "sum"),
                 Compl_VAAT=("Compl_VAAT", "sum"),
                 Compl_VAAR=("Compl_VAAR", "sum"),
                 ICMS_Educacional=("ICMS_Educacional", "sum")
@@ -349,7 +354,7 @@ if menu == "📊 Visão geral dos recursos":
             .dropna(subset=["ANO"])
             .sort_values("ANO")
         )
-        evol["Complementacoes"] = evol["Complementacoes"] + evol["Compl_VAAT"] + evol["Compl_VAAR"]
+        evol["Complementacoes"] = evol["Compl_VAAF"] + evol["Compl_VAAT"] + evol["Compl_VAAR"]
 
         fig = go.Figure()
         fig.add_trace(go.Scatter(
@@ -385,38 +390,80 @@ elif menu == "💰 Fundeb – Diagnóstico":
     if df_mun.empty:
         st.warning("Não há dados para o município selecionado.")
     else:
-        st.markdown(f"### {municipio_sel} – trajetória do Fundeb")
+        st.markdown(f"### {municipio_sel} – Fundeb base e complementações ao longo do tempo")
 
-        fig_fund_mun = px.bar(
-            df_mun,
-            x="ANO",
-            y="Fundeb_Total",
-            labels={"ANO": "Ano", "Fundeb_Total": "Fundeb total (R$)"},
+        df_mun["Complementacoes"] = (
+            df_mun["Compl_VAAF"] +
+            df_mun["Compl_VAAT"] +
+            df_mun["Compl_VAAR"]
         )
+
+        fig_fund_mun = go.Figure()
+        fig_fund_mun.add_trace(go.Bar(
+            x=df_mun["ANO"],
+            y=df_mun["Fundeb_Base"],
+            name="Fundeb base"
+        ))
+        fig_fund_mun.add_trace(go.Bar(
+            x=df_mun["ANO"],
+            y=df_mun["Complementacoes"],
+            name="Complementações (VAAF+VAAT+VAAR)"
+        ))
         fig_fund_mun.update_layout(
+            barmode="stack",
             template="simple_white",
             height=420,
-            yaxis_title="Fundeb total (R$)",
-            title=f"Evolução do Fundeb (base + complementações) – {municipio_sel}"
+            xaxis_title="Ano",
+            yaxis_title="Valor (R$)",
+            title=f"Fundeb base e complementações – {municipio_sel}"
         )
         st.plotly_chart(fig_fund_mun, use_container_width=True)
 
-        st.markdown("#### Crescimento ou queda ano a ano do Fundeb")
+        st.markdown("#### Tabela – Fundeb base, complementações e total (com variações ano a ano)")
 
-        base_tab = df_mun[["ANO", "Fundeb_Base", "Fundeb_Total"]].copy()
+        base_tab = df_mun[["ANO", "Fundeb_Base", "Complementacoes", "Fundeb_Total"]].copy()
         base_tab = base_tab.sort_values("ANO")
-        base_tab["Diferença absoluta (Fundeb Total)"] = base_tab["Fundeb_Total"].diff()
-        base_tab["Diferença percentual (Fundeb Total)"] = base_tab["Fundeb_Total"].pct_change()
+
+        base_tab["Dif_abs_Base"] = base_tab["Fundeb_Base"].diff()
+        base_tab["Dif_perc_Base"] = base_tab["Fundeb_Base"].pct_change()
+
+        base_tab["Dif_abs_Compl"] = base_tab["Complementacoes"].diff()
+        base_tab["Dif_perc_Compl"] = base_tab["Complementacoes"].pct_change()
+
+        base_tab["Dif_abs_Total"] = base_tab["Fundeb_Total"].diff()
+        base_tab["Dif_perc_Total"] = base_tab["Fundeb_Total"].pct_change()
 
         base_exib = base_tab.copy()
+
         base_exib["Fundeb_Base"] = base_exib["Fundeb_Base"].map(formatar_reais)
+        base_exib["Complementacoes"] = base_exib["Complementacoes"].map(formatar_reais)
         base_exib["Fundeb_Total"] = base_exib["Fundeb_Total"].map(formatar_reais)
-        base_exib["Diferença absoluta (Fundeb Total)"] = base_exib["Diferença absoluta (Fundeb Total)"].map(
-            formatar_reais
-        )
-        base_exib["Diferença percentual (Fundeb Total)"] = base_exib["Diferença percentual (Fundeb Total)"].map(
+
+        base_exib["Dif_abs_Base"] = base_exib["Dif_abs_Base"].map(formatar_reais)
+        base_exib["Dif_abs_Compl"] = base_exib["Dif_abs_Compl"].map(formatar_reais)
+        base_exib["Dif_abs_Total"] = base_exib["Dif_abs_Total"].map(formatar_reais)
+
+        base_exib["Dif_perc_Base"] = base_exib["Dif_perc_Base"].map(
             lambda v: f"{v*100:+.1f}%" if pd.notna(v) else "-"
         )
+        base_exib["Dif_perc_Compl"] = base_exib["Dif_perc_Compl"].map(
+            lambda v: f"{v*100:+.1f}%" if pd.notna(v) else "-"
+        )
+        base_exib["Dif_perc_Total"] = base_exib["Dif_perc_Total"].map(
+            lambda v: f"{v*100:+.1f}%" if pd.notna(v) else "-"
+        )
+
+        base_exib.rename(columns={
+            "Fundeb_Base": "Fundeb base",
+            "Complementacoes": "Complementações",
+            "Fundeb_Total": "Fundeb total",
+            "Dif_abs_Base": "Dif. abs. Fundeb base",
+            "Dif_perc_Base": "Dif. % Fundeb base",
+            "Dif_abs_Compl": "Dif. abs. Complementações",
+            "Dif_perc_Compl": "Dif. % Complementações",
+            "Dif_abs_Total": "Dif. abs. Fundeb total",
+            "Dif_perc_Total": "Dif. % Fundeb total",
+        }, inplace=True)
 
         st.dataframe(
             base_exib.set_index("ANO"),
@@ -424,8 +471,9 @@ elif menu == "💰 Fundeb – Diagnóstico":
         )
 
         st.caption(
-            "Fundeb_Base = receita do Fundeb antes das complementações. "
-            "Fundeb_Total = Fundeb_Base + VAAF + VAAT + VAAR."
+            "Fundeb base = receita do Fundeb antes das complementações. "
+            "Complementações = VAAF + VAAT + VAAR. "
+            "Fundeb total = Fundeb base + complementações."
         )
 
 # ================================================================
@@ -522,16 +570,17 @@ elif menu == "🏛️ Complementações da União (VAAT & VAAR)":
             .astype(str)
             .str.zfill(7)
         )
+        df_vaat_mapa["Compl_VAAT_plot"] = df_vaat_mapa["Compl_VAAT"].replace(0, np.nan)
 
         fig_vaat_mapa = px.choropleth(
             df_vaat_mapa,
             geojson=mapa_es,
             locations="Codigo_IBGE_str",
             featureidkey="properties.CD_MUN",
-            color="Compl_VAAT",
+            color="Compl_VAAT_plot",
             hover_name="MUNICÍPIO",
             color_continuous_scale="Purples",
-            labels={"Compl_VAAT": "VAAT (R$)"},
+            labels={"Compl_VAAT_plot": "VAAT (R$)"},
         )
         fig_vaat_mapa.update_geos(fitbounds="locations", visible=False)
         fig_vaat_mapa.update_layout(
@@ -566,24 +615,6 @@ elif menu == "🏛️ Complementações da União (VAAT & VAAR)":
                 <h2 style='margin-top:-4px;'>{formatar_reais(valor_total_vaar)}</h2>
             </div>
             """, unsafe_allow_html=True)
-
-        contagem = df_vaar["Status_VAAR"].value_counts().reset_index()
-        contagem.columns = ["Status_VAAR", "Quantidade"]
-
-        fig_status = px.bar(
-            contagem,
-            x="Status_VAAR",
-            y="Quantidade",
-            text="Quantidade",
-            labels={"Status_VAAR": "", "Quantidade": "Municípios"},
-        )
-        fig_status.update_layout(
-            template="simple_white",
-            height=420,
-            title="Municípios habilitados vs. não habilitados ao VAAR (a partir dos recebimentos)",
-            xaxis_tickangle=-10
-        )
-        st.plotly_chart(fig_status, use_container_width=True)
 
         st.markdown("#### Ranking VAAR – valores recebidos por município")
         rank_vaar = df_vaar[["MUNICÍPIO", "Compl_VAAR"]].copy()
@@ -623,16 +654,17 @@ elif menu == "🏛️ Complementações da União (VAAT & VAAR)":
             .astype(str)
             .str.zfill(7)
         )
+        df_vaar_mapa["Compl_VAAR_plot"] = df_vaar_mapa["Compl_VAAR"].replace(0, np.nan)
 
         fig_vaar_mapa = px.choropleth(
             df_vaar_mapa,
             geojson=mapa_es,
             locations="Codigo_IBGE_str",
             featureidkey="properties.CD_MUN",
-            color="Compl_VAAR",
+            color="Compl_VAAR_plot",
             hover_name="MUNICÍPIO",
             color_continuous_scale="Tealrose",
-            labels={"Compl_VAAR": "VAAR (R$)"},
+            labels={"Compl_VAAR_plot": "VAAR (R$)"},
         )
         fig_vaar_mapa.update_geos(fitbounds="locations", visible=False)
         fig_vaar_mapa.update_layout(
@@ -651,13 +683,51 @@ elif menu == "📈 Comparativos e cruzamentos":
     if df_ano.empty:
         st.warning("Não há dados para o ano selecionado.")
     else:
-        st.markdown("### Quanto cada município recebe somando todas as fontes (Fundeb + VAAT + VAAR + ICMS Educacional)")
+        # --------------------------------------------------------
+        # A) TABELA – Fundeb base, complementações, ICMS e total
+        # --------------------------------------------------------
+        st.markdown("### Tabela – Recursos educacionais por município")
+
+        df_comp_tab = df_ano.copy()
+        df_comp_tab["Complementacoes"] = (
+            df_comp_tab["Compl_VAAF"] +
+            df_comp_tab["Compl_VAAT"] +
+            df_comp_tab["Compl_VAAR"]
+        )
+        df_comp_tab["Total_Receitas_Chave"] = df_comp_tab["Fundeb_Total"] + df_comp_tab["ICMS_Educacional"]
+
+        tab_exib = df_comp_tab[[
+            "MUNICÍPIO",
+            "Fundeb_Base",
+            "Complementacoes",
+            "ICMS_Educacional",
+            "Total_Receitas_Chave"
+        ]].copy()
+
+        tab_exib["Fundeb_Base"] = tab_exib["Fundeb_Base"].map(formatar_reais)
+        tab_exib["Complementacoes"] = tab_exib["Complementacoes"].map(formatar_reais)
+        tab_exib["ICMS_Educacional"] = tab_exib["ICMS_Educacional"].map(formatar_reais)
+        tab_exib["Total_Receitas_Chave"] = tab_exib["Total_Receitas_Chave"].map(formatar_reais)
+
+        tab_exib.rename(columns={
+            "MUNICÍPIO": "Município",
+            "Fundeb_Base": "Fundeb base",
+            "Complementacoes": "Complementações",
+            "ICMS_Educacional": "ICMS Educacional",
+            "Total_Receitas_Chave": "Total (Fundeb + ICMS Educ.)"
+        }, inplace=True)
+
+        st.dataframe(tab_exib.set_index("Município"), use_container_width=True)
+
+        # --------------------------------------------------------
+        # B) GRÁFICO – Barras empilhadas horizontais (todos muníc.)
+        # --------------------------------------------------------
+        st.markdown("### Gráfico – Composição dos recursos educacionais por município")
 
         df_tot = df_ano.copy()
         df_tot["Total_Receitas_Chave"] = df_tot["Fundeb_Total"] + df_tot["ICMS_Educacional"]
         df_tot = df_tot.sort_values("Total_Receitas_Chave", ascending=True)
 
-        # Cores destacando o município selecionado
         def cores_por_municipio(series_mun, cor_normal, cor_dest):
             return [
                 cor_dest if m == municipio_sel else cor_normal
@@ -696,7 +766,7 @@ elif menu == "📈 Comparativos e cruzamentos":
         fig_bar.update_layout(
             barmode="stack",
             template="simple_white",
-            height=700,
+            height=800,
             title=f"Recursos educacionais por município – {ano_sel}",
             xaxis_title="Valor (R$)",
             yaxis_title="Município",
@@ -704,9 +774,18 @@ elif menu == "📈 Comparativos e cruzamentos":
         )
         st.plotly_chart(fig_bar, use_container_width=True)
 
-        st.markdown("### Estrutura dos recursos educacionais por município (participação percentual)")
+        # --------------------------------------------------------
+        # C) Estrutura percentual dos recursos (com maior altura)
+        # --------------------------------------------------------
+        st.markdown("### Estrutura percentual dos recursos educacionais por município")
+
         df_dep = df_ano.copy()
-        df_dep["Total_Recursos"] = df_dep["Fundeb_Base"] + df_dep["Compl_VAAT"] + df_dep["Compl_VAAR"] + df_dep["ICMS_Educacional"]
+        df_dep["Total_Recursos"] = (
+            df_dep["Fundeb_Base"] +
+            df_dep["Compl_VAAT"] +
+            df_dep["Compl_VAAR"] +
+            df_dep["ICMS_Educacional"]
+        )
         df_dep = df_dep[df_dep["Total_Recursos"] > 0].copy()
 
         for col in ["Fundeb_Base", "Compl_VAAT", "Compl_VAAR", "ICMS_Educacional"]:
@@ -735,34 +814,13 @@ elif menu == "📈 Comparativos e cruzamentos":
         )
         fig_stack.update_layout(
             template="simple_white",
-            height=800,
+            height=1000,
             xaxis_tickformat=".0%",
             title="Estrutura percentual dos recursos educacionais por município",
             legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0.0)
         )
+        fig_stack.update_yaxes(automargin=True)
         st.plotly_chart(fig_stack, use_container_width=True)
-
-        st.markdown("### Municípios com pouco ICMS Educacional e muito VAAR (e o contrário)")
-        df_disp = df_ano.copy()
-        df_disp = df_disp[(df_disp["ICMS_Educacional"] > 0) | (df_disp["Compl_VAAR"] > 0)]
-
-        if df_disp.empty:
-            st.info("Não há dados suficientes para comparar ICMS Educacional e VAAR.")
-        else:
-            fig_scatter = px.scatter(
-                df_disp,
-                x="ICMS_Educacional",
-                y="Compl_VAAR",
-                text="MUNICÍPIO",
-                labels={"ICMS_Educacional": "ICMS Educacional (R$)", "Compl_VAAR": "VAAR (R$)"},
-            )
-            fig_scatter.update_traces(textposition="top center", marker=dict(size=10))
-            fig_scatter.update_layout(
-                template="simple_white",
-                height=520,
-                title="Relação entre ICMS Educacional e VAAR por município"
-            )
-            st.plotly_chart(fig_scatter, use_container_width=True)
 
 # ================================================================
 # BLOCO 8 – SEÇÃO: MAPA ESTADUAL (AGORA REAL)
@@ -801,16 +859,17 @@ elif menu == "🗺️ Mapa estadual (visão conceitual)":
             .astype(str)
             .str.zfill(7)
         )
+        df_mapa["valor_plot"] = df_mapa[col_ind].replace(0, np.nan)
 
         fig_mapa = px.choropleth(
             df_mapa,
             geojson=mapa_es,
             locations="Codigo_IBGE_str",
             featureidkey="properties.CD_MUN",
-            color=col_ind,
+            color="valor_plot",
             hover_name="MUNICÍPIO",
             color_continuous_scale="Viridis",
-            labels={col_ind: "Valor (R$)"},
+            labels={"valor_plot": "Valor (R$)"},
         )
         fig_mapa.update_geos(fitbounds="locations", visible=False)
         fig_mapa.update_layout(
@@ -870,18 +929,13 @@ elif menu == "💡 Insights automáticos":
                 f"{', '.join(sorted(lista))}."
             )
 
-        # 4) Municípios com alta receita de Fundeb, mas baixa receita de ICMS Educacional
-        q3_fundeb = df_ano["Fundeb_Total"].quantile(0.75)
+        # 4) Municípios com ICMS Educacional relativamente baixo (1º quartil)
         q1_icms = df_ano["ICMS_Educacional"].quantile(0.25)
-        filtro_oportunidade = df_ano[
-            (df_ano["Fundeb_Total"] >= q3_fundeb) &
-            (df_ano["ICMS_Educacional"] <= q1_icms)
-        ]
-        if not filtro_oportunidade.empty:
+        icms_baixo = df_ano[df_ano["ICMS_Educacional"] <= q1_icms]["MUNICÍPIO"].tolist()
+        if icms_baixo:
             insights.append(
-                "- 💡 **Municípios com Fundeb elevado, mas ICMS Educacional relativamente baixo** "
-                "(podem se beneficiar de melhor desempenho educacional e gestão das condicionalidades): "
-                f"{', '.join(sorted(filtro_oportunidade['MUNICÍPIO'].tolist()))}."
+                "- 💡 **Municípios com ICMS Educacional relativamente baixo (até o 1º quartil)**: "
+                f"{', '.join(sorted(icms_baixo))}."
             )
 
         if insights:
