@@ -164,12 +164,12 @@ def carregar_dados():
         "Receita Fundeb Estimada",
         "Cota-parte ICMS Realizada",
         "ICMS Educacional",
-        "Receita total do Fundeb Realizada",
+        "Receita da contribuição de estados e municípios ao Fundeb",
         "VAAF",
         "VAAT anterior à Complementação-VAAT (art. 16, IV) (R$)",
         "VAAT com a Complementação da União-VAAT (art. 16, V) (R$)",
-        "Complementação da União-VAAT (art. 16, VI) (R$)",
-        "Complementação da União-VAAR (R$)",
+        "Complementação VAAT",
+        "Complementação VAAR",
         "VAAT Mínimo Brasil",
     ]
 
@@ -182,11 +182,11 @@ def carregar_dados():
     if "Código IBGE" in df.columns:
         df["Código IBGE"] = pd.to_numeric(df["Código IBGE"], errors="coerce").astype("Int64")
 
-    # Colunas derivadas
-    df["Fundeb_Base"] = df.get("Receita total do Fundeb Realizada", 0)
+    # Colunas derivadas com NOVOS NOMES
+    df["Fundeb_Base"] = df.get("Receita da contribuição de estados e municípios ao Fundeb", 0)
     df["Compl_VAAF"] = df.get("VAAF", 0).fillna(0)
-    df["Compl_VAAT"] = df.get("Complementação da União-VAAT (art. 16, VI) (R$)", 0).fillna(0)
-    df["Compl_VAAR"] = df.get("Complementação da União-VAAR (R$)", 0).fillna(0)
+    df["Compl_VAAT"] = df.get("Complementação VAAT", 0).fillna(0)
+    df["Compl_VAAR"] = df.get("Complementação VAAR", 0).fillna(0)
 
     df["Fundeb_Total"] = (
         df["Fundeb_Base"] +
@@ -205,6 +205,8 @@ def carregar_dados():
 
     df["Dep_Fundeb_orcamento"] = df["Fundeb_Total"] / df["Orcamento_Total"]
     df["Dep_Fundeb_despesa_educ"] = df["Fundeb_Total"] / df["Despesa_Educacao"]
+
+    # NÃO calcular nem usar representatividade do ICMS Educacional por enquanto
 
     if not df_vaat_hab.empty and "Código IBGE" in df_vaat_hab.columns:
         df_vaat_hab["Código IBGE"] = pd.to_numeric(df_vaat_hab["Código IBGE"], errors="coerce").astype("Int64")
@@ -591,7 +593,7 @@ elif menu == "🏛️ Complementações da União (VAAT & VAAR)":
         st.plotly_chart(fig_vaat_mapa, use_container_width=True)
 
         st.markdown("---")
-        st.subheader("🔹 Complementação VAAR – habilitação, ranking e disparidades")
+        st.subheader("🔹 Complementação VAAR – ranking e disparidades")
 
         df_vaar = df_ano.copy()
         df_vaar["Recebe_VAAR"] = df_vaar["Compl_VAAR"] > 0
@@ -834,7 +836,7 @@ elif menu == "🗺️ Mapa estadual (visão conceitual)":
         st.markdown("Escolha qual indicador deseja visualizar no mapa:")
 
         opcoes_indicador = {
-            "Fundeb base (Receita total do Fundeb Realizada)": "Fundeb_Base",
+            "Fundeb base (Receita da contribuição de estados e municípios ao Fundeb)": "Fundeb_Base",
             "Complementações (VAAF + VAAT + VAAR)": "Compl_Total",
             "Fundeb total (base + complementações)": "Fundeb_Total",
             "ICMS Educacional": "ICMS_Educacional",
