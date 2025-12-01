@@ -146,8 +146,20 @@ def carregar_dados():
     else:
         df_vaat_hab = pd.DataFrame()
 
-    # Remove espaços extras no início/fim dos nomes de coluna
-    df.columns = [c.strip() for c in df.columns]
+        # ------------------------------------------------------------
+    # NORMALIZAÇÃO COMPLETA DOS NOMES DAS COLUNAS
+    # ------------------------------------------------------------
+    def normalizar_coluna(c):
+        if not isinstance(c, str):
+            c = str(c)
+        c = c.replace("\n", " ")          # quebra de linha
+        c = c.replace("\r", " ")          # retorno de carro
+        c = c.replace("  ", " ")          # espaços duplos
+        c = c.replace(" ", " ")           # espaço unicode
+        c = c.strip()                     # remove espaços no início e fim
+        return c
+
+    df.columns = [normalizar_coluna(c) for c in df.columns]
 
     # ---------------- Função de conversão numérica inteligente ----------------
     def _coerce_numeric(col):
@@ -1018,3 +1030,4 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+
