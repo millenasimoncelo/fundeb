@@ -225,7 +225,8 @@ def carregar_dados():
     df["Fundeb_Base"] = df.get("Receita da contribuição de estados e municípios ao Fundeb", 0)
 
     # Complementações
-    df["Compl_VAAF"] = df.get("Complementação VAAF", 0).fillna(0)
+    # VAAF será sempre zero no ES – ignorado para evitar erros
+    df["Compl_VAAF"] = 0
     df["Compl_VAAT"] = df.get("Complementação VAAT", 0).fillna(0)
     df["Compl_VAAR"] = df.get("Complementação VAAR", 0).fillna(0)
 
@@ -1030,4 +1031,5 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+
 
