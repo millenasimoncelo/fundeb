@@ -146,7 +146,7 @@ def carregar_dados():
     else:
         df_vaat_hab = pd.DataFrame()
 
-    # tira espaços começo/fim
+    # Remove espaços extras nas bordas dos nomes de colunas
     df.columns = [c.strip() for c in df.columns]
 
     def _coerce_numeric(col):
@@ -158,6 +158,7 @@ def carregar_dados():
         col = col.replace({"-": np.nan, "--": np.nan, "nan": np.nan, "None": np.nan, "": np.nan})
         return pd.to_numeric(col, errors="coerce")
 
+    # Colunas numéricas com os nomes EXATOS da sua planilha
     num_cols = [
         "Orçamento",
         "Despesa Educação",
@@ -183,55 +184,41 @@ def carregar_dados():
     if "Código IBGE" in df.columns:
         df["Código IBGE"] = pd.to_numeric(df["Código IBGE"], errors="coerce").astype("Int64")
 
-    # ---------------- Colunas derivadas ----------------
-    # Fundeb base
-    if "Receita da contribuição de estados e municípios ao Fundeb" in df.columns:
-        df["Fundeb_Base"] = df["Receita da contribuição de estados e municípios ao Fundeb"].fillna(0)
-    else:
-        df["Fundeb_Base"] = 0
+    # -----------------------------
+    # COLUNAS DERIVADAS PRINCIPAIS
+    # -----------------------------
+    # Fundeb base = Receita da contribuição de estados e municípios ao Fundeb
+    df["Fundeb_Base"] = df.get(
+        "Receita da contribuição de estados e municípios ao Fundeb", 0
+    ).fillna(0)
 
     # Complementações
-    if "Complementação VAAF" in df.columns:
-        df["Compl_VAAF"] = df["Complementação VAAF"].fillna(0)
-    else:
-        df["Compl_VAAF"] = 0
+    df["Compl_VAAF"] = df.get("Complementação VAAF", 0).fillna(0)
+    df["Compl_VAAT"] = df.get("Complementação VAAT", 0).fillna(0)
+    df["Compl_VAAR"] = df.get("Complementação VAAR", 0).fillna(0)
 
-    if "Complementação VAAT" in df.columns:
-        df["Compl_VAAT"] = df["Complementação VAAT"].fillna(0)
-    else:
-        df["Compl_VAAT"] = 0
+    # Fundeb total (base + complementações)
+    df["Fundeb_Total"] = (
+        df["Fundeb_Base"] +
+        df["Compl_VAAF"] +
+        df["Compl_VAAT"] +
+        df["Compl_VAAR"]
+    )
 
-    if "Complementação VAAR" in df.columns:
-        df["Compl_VAAR"] = df["Complementação VAAR"].fillna(0)
-    else:
-        df["Compl_VAAR"] = 0
+    # ICMS e orçamento
+    df["ICMS_Educacional"] = df.get("ICMS Educacional", 0).fillna(0)
+    df["ICMS_CotaParte"] = df.get("Cota-parte ICMS Realizada", np.nan)
 
-    # Fundeb total
-    df["Fundeb_Total"] = df["Fundeb_Base"] + df["Compl_VAAF"] + df["Compl_VAAT"] + df["Compl_VAAR"]
-
-    # ICMS
-    if "ICMS Educacional" in df.columns:
-        df["ICMS_Educacional"] = df["ICMS Educacional"].fillna(0)
-    else:
-        df["ICMS_Educacional"] = 0
-
-    if "Cota-parte ICMS Realizada" in df.columns:
-        df["ICMS_CotaParte"] = df["Cota-parte ICMS Realizada"]
-    else:
-        df["ICMS_CotaParte"] = np.nan
-
-    # Orçamento / despesa educação
     df["Orcamento_Total"] = df.get("Orçamento", np.nan)
     df["Despesa_Educacao"] = df.get("Despesa Educação", np.nan)
 
-    # Recursos ampliados (Fundeb + ICMS Educacional)
     df["Recursos_Educacao_Ampliados"] = df["Fundeb_Total"] + df["ICMS_Educacional"]
 
-    # Dependência do Fundeb
+    # Dependência tomando Fundeb TOTAL (base + compl.)
     df["Dep_Fundeb_orcamento"] = df["Fundeb_Total"] / df["Orcamento_Total"]
     df["Dep_Fundeb_despesa_educ"] = df["Fundeb_Total"] / df["Despesa_Educacao"]
 
-    # Merge opcional com planilha de habilitação VAAT (se existir)
+    # Merge opcional com habilitação VAAT (se existir planilha)
     if not df_vaat_hab.empty and "Código IBGE" in df_vaat_hab.columns:
         df_vaat_hab["Código IBGE"] = pd.to_numeric(df_vaat_hab["Código IBGE"], errors="coerce").astype("Int64")
         df = df.merge(
@@ -267,7 +254,6 @@ def carregar_mapa_es():
     return geojson_es
 
 
-# ================== CARREGAMENTO PRINCIPAL ======================
 df = carregar_dados()
 mapa_es = carregar_mapa_es()
 
@@ -499,7 +485,7 @@ elif menu == "💰 Fundeb – Diagnóstico":
 
         st.caption(
             "Fundeb base = receita da contribuição de estados e municípios ao Fundeb. "
-            "Complementações = VAAF + VAAT + VAAR. "
+            "Complementações = Complementação VAAF + Complementação VAAT + Complementação VAAR. "
             "Fundeb total = Fundeb base + complementações."
         )
 
@@ -618,11 +604,10 @@ elif menu == "🏛️ Complementações da União (VAAT & VAAR)":
         st.plotly_chart(fig_vaat_mapa, use_container_width=True)
 
         st.markdown("---")
-        st.subheader("🔹 Complementação VAAR – habilitação, ranking e disparidades")
+        st.subheader("🔹 Complementação VAAR – ranking e disparidades")
 
         df_vaar = df_ano.copy()
         df_vaar["Recebe_VAAR"] = df_vaar["Compl_VAAR"] > 0
-        df_vaar["Status_VAAR"] = np.where(df_vaar["Recebe_VAAR"], "Habilitado (recebeu VAAR)", "Não habilitado")
 
         # Cards para VAAR
         col_vaar1, col_vaar2 = st.columns([1.4, 1])
@@ -970,8 +955,10 @@ elif menu == "💡 Insights automáticos":
             for item in insights:
                 st.markdown(item)
         else:
-            st.info("Não foram identificados alertas relevantes com as regras atuais. Mesmo assim, o painel "
-                    "pode ser explorado para identificar oportunidades específicas.")
+            st.info(
+                "Não foram identificados alertas relevantes com as regras atuais. Mesmo assim, o painel "
+                "pode ser explorado para identificar oportunidades específicas."
+            )
 
 # ================================================================
 # BLOCO 10 – SEÇÃO: DOWNLOADS
