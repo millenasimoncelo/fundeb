@@ -142,58 +142,58 @@ def carregar_dados():
     df = pd.read_excel(caminho_encontrado, sheet_name="Planilha1")
 
     # Tira espaços extras dos nomes das colunas
-df.columns = [c.strip() for c in df.columns]
+        df.columns = [c.strip() for c in df.columns]
 
-# -----------------------------------------------------------
-# Normalizar colunas numéricas do Excel (converter textos → número)
-# -----------------------------------------------------------
-def to_number(x):
-    if pd.isna(x):
-        return 0
-    x = str(x).strip()
-
-    # Remove "R$"
-    x = x.replace("R$", "").replace("r$", "")
-
-    # Corrige separadores brasileiros
-    x = x.replace(".", "").replace(",", ".")
-
-    # Agora converte
-    try:
-        return float(x)
-    except:
-        return 0
-
-colunas_numericas = [
-    "Orçamento",
-    "Despesa Educação",
-    "Receita Cota-parte ICMS Estimada",
-    "Receita Fundeb Estimada",
-    "Cota-parte ICMS Realizada",
-    "ICMS Educacional",
-    "Representatividade do ICMS Educacional",
-    "Receita da contribuição de estados e municípios ao Fundeb",
-    "Complementação VAAF",
-    "Complementação VAAT",
-    "Complementação VAAR",
-    "VAAT anterior à Complementação-VAAT (art. 16, IV) (R$)",
-    "VAAT com a Complementação da União-VAAT (art. 16, V) (R$)",
-]
-
-for c in colunas_numericas:
-    if c in df.columns:
-        df[c] = df[c].apply(to_number)
-
-    # Descobre abas disponíveis (para habilitação VAAT 2026, se existir)
-    abas = pd.ExcelFile(caminho_encontrado).sheet_names
-    if "Habilitação VAAT 2026" in abas:
-        df_vaat_hab = pd.read_excel(
-            caminho_encontrado,
-            sheet_name="Habilitação VAAT 2026"
-        )
-    else:
-        df_vaat_hab = pd.DataFrame()
-
+        # -----------------------------------------------------------
+        # Normalizar colunas numéricas do Excel (converter textos → número)
+        # -----------------------------------------------------------
+        def to_number(x):
+            if pd.isna(x):
+                return 0
+            x = str(x).strip()
+        
+            # Remove "R$"
+            x = x.replace("R$", "").replace("r$", "")
+        
+            # Corrige separadores brasileiros
+            x = x.replace(".", "").replace(",", ".")
+        
+            # Agora converte
+            try:
+                return float(x)
+            except:
+                return 0
+        
+        colunas_numericas = [
+            "Orçamento",
+            "Despesa Educação",
+            "Receita Cota-parte ICMS Estimada",
+            "Receita Fundeb Estimada",
+            "Cota-parte ICMS Realizada",
+            "ICMS Educacional",
+            "Representatividade do ICMS Educacional",
+            "Receita da contribuição de estados e municípios ao Fundeb",
+            "Complementação VAAF",
+            "Complementação VAAT",
+            "Complementação VAAR",
+            "VAAT anterior à Complementação-VAAT (art. 16, IV) (R$)",
+            "VAAT com a Complementação da União-VAAT (art. 16, V) (R$)",
+        ]
+        
+        for c in colunas_numericas:
+            if c in df.columns:
+                df[c] = df[c].apply(to_number)
+        
+            # Descobre abas disponíveis (para habilitação VAAT 2026, se existir)
+            abas = pd.ExcelFile(caminho_encontrado).sheet_names
+            if "Habilitação VAAT 2026" in abas:
+                df_vaat_hab = pd.read_excel(
+                    caminho_encontrado,
+                    sheet_name="Habilitação VAAT 2026"
+                )
+            else:
+                df_vaat_hab = pd.DataFrame()
+        
     # ---------------- Função de conversão numérica inteligente ----------------
     def _coerce_numeric(col):
         """
@@ -1172,4 +1172,5 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+
 
