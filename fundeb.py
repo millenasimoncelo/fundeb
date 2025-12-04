@@ -53,7 +53,7 @@ html, body, [class*="css"] {
     color:#5F6169;
 }
 
-/* Cards */
+/* Cards grandes do topo */
 .big-card{
     background:#3A0057;
     color:#fff;
@@ -61,7 +61,13 @@ html, body, [class*="css"] {
     border-radius:14px;
     text-align:center;
     box-shadow:0 0 12px rgba(0,0,0,.15);
+    height:180px;                /* força mesma altura nos 3 cards */
+    display:flex;
+    flex-direction:column;
+    justify-content:center;
 }
+
+/* Cards menores */
 .small-card,.white-card{
     padding:22px;
     border-radius:12px;
@@ -105,13 +111,11 @@ html, body, [class*="css"] {
 # ================================================================
 @st.cache_data(show_spinner=True)
 def carregar_dados():
-    import os
     import pandas as pd
     import numpy as np
 
     nome_arquivo = "loa.xlsx"
 
-    # Caminhos possíveis (mesmo nível ou pasta data/)
     caminhos_possiveis = [
         nome_arquivo,
         os.path.join("data", nome_arquivo),
@@ -127,150 +131,133 @@ def carregar_dados():
             break
 
     if caminho_encontrado is None:
-        st.error(
-            f"❌ Arquivo {nome_arquivo} não encontrado.\n\n"
-            "Coloque o arquivo na mesma pasta do fundeb.py ou dentro da pasta data/."
-        )
+        st.error(f"""
+        ❌ Arquivo não encontrado.
+
+        Coloque o arquivo:
+        **{nome_arquivo}**
+
+        ➤ na mesma pasta do *fundeb.py*  
+        **OU**  
+        ➤ dentro da pasta **data/** ou **dados/**.
+        """)
         st.stop()
 
-    # ------------------------------------------------------------------
-    # LÊ A PLANILHA PRINCIPAL
-    # ------------------------------------------------------------------
+    # Carrega planilha principal
     df = pd.read_excel(caminho_encontrado, sheet_name="Planilha1")
 
-    # Tira espaços extras nos nomes das colunas
+    # Remove espaços extras no início/fim dos nomes de coluna
     df.columns = [c.strip() for c in df.columns]
 
-    # Lê abas disponíveis (para habilitação VAAT 2026, se existir)
-    abas = pd.ExcelFile(caminho_encontrado).sheet_names
-    if "Habilitação VAAT 2026" in abas:
-        df_vaat_hab = pd.read_excel(caminho_encontrado, sheet_name="Habilitação VAAT 2026")
-    else:
-        df_vaat_hab = pd.DataFrame()
-
-    # ------------------------------------------------------------------
-    # Função para converter qualquer coluna numérica (R$, pt-BR, etc.)
-    # ------------------------------------------------------------------
-    def _coerce_numeric(series):
+    # ---------------- Função de conversão numérica inteligente ----------------
+    def _coerce_numeric(col):
         """
-        Converte série para número aceitando:
-        - 1.234,56 (pt-BR)
-        - 123456.78 (padrão)
-        - remove 'R$', traços, strings vazias etc.
+        Converte para número aceitando:
+        - Formato BR: 1.234,56   (usa vírgula)
+        - Formato "padrão": 4067327.36 (sem vírgula, ponto como decimal)
+        - Remove 'R$', espaços, traços, etc.
         """
-        if pd.api.types.is_numeric_dtype(series):
-            return series
+        if pd.api.types.is_numeric_dtype(col):
+            return col
 
-        s = series.astype(str)
-        s = s.str.replace("R$", "", regex=False).str.strip()
+        col = col.astype(str)
+        col = col.str.replace("R$", "", regex=False)
+        col = col.str.strip()
 
-        # onde tiver vírgula, trata como padrão brasileiro
-        mask_comma = s.str.contains(",", regex=False)
+        # onde tiver vírgula, tratamos como formato brasileiro
+        mask_comma = col.str.contains(",", regex=False)
 
-        s2 = s.copy()
-        s2[mask_comma] = (
-            s2[mask_comma]
+        col2 = col.copy()
+        # Formato BR: 1.234,56 -> 1234.56
+        col2[mask_comma] = (
+            col2[mask_comma]
             .str.replace(".", "", regex=False)
             .str.replace(",", ".", regex=False)
         )
-        # onde NÃO tem vírgula, deixa como está
-        s2[~mask_comma] = s2[~mask_comma]
+        # onde NÃO tiver vírgula, mantemos como está (ponto já é decimal)
+        col2[~mask_comma] = col2[~mask_comma]
 
-        s2 = s2.replace(
+        col2 = col2.replace(
             {"-": np.nan, "--": np.nan, "nan": np.nan, "None": np.nan, "": np.nan}
         )
+        return pd.to_numeric(col2, errors="coerce")
 
-        return pd.to_numeric(s2, errors="coerce")
+    # Lista de colunas numéricas (pelo nome exato que está na planilha)
+    num_cols = [
+        "Orçamento",
+        "Despesa Educação",
+        "Receita Cota-parte ICMS Estimada",
+        "Receita Fundeb Estimada",
+        "Cota-parte ICMS Realizada",
+        "ICMS Educacional",
+        "Receita total do Fundeb Realizada",
+        "VAAF",
+        "VAAT anterior à Complementação-VAAT (art. 16, IV) (R$)",
+        "VAAT com a Complementação da União-VAAT (art. 16, V) (R$)",
+        "Complementação da União-VAAT (art. 16, VI) (R$)",
+        "Complementação da União-VAAR (R$)",
+        "VAAT Mínimo Brasil",
+    ]
 
-    # Helper: pega a primeira coluna que existir da lista
-    def get_any(colunas, default=0.0):
-        for nome in colunas:
-            if nome in df.columns:
-                return _coerce_numeric(df[nome]).fillna(0)
-        # se nenhuma existir, devolve série zerada
-        return pd.Series(default, index=df.index, dtype="float64")
+    for c in num_cols:
+        if c in df.columns:
+            df[c] = _coerce_numeric(df[c])
 
-    # ------------------------------------------------------------------
-    # Padroniza colunas-chave (aceita versões diferentes do arquivo)
-    # ------------------------------------------------------------------
-    # Ano e código IBGE
+    # Ajuste de tipos de ano e código IBGE
     if "ANO" in df.columns:
         df["ANO"] = pd.to_numeric(df["ANO"], errors="coerce").astype("Int64")
     if "Código IBGE" in df.columns:
         df["Código IBGE"] = pd.to_numeric(df["Código IBGE"], errors="coerce").astype("Int64")
 
-    # Fundeb base:
-    # 1) tenta "Receita da contribuição de estados e municípios ao Fundeb"
-    # 2) se for tudo zero e existir "Receita total do Fundeb Realizada", usa ela
-    df["Fundeb_Base"] = get_any(
-        ["Receita da contribuição de estados e municípios ao Fundeb"],
-        default=0.0,
-    )
-    if df["Fundeb_Base"].fillna(0).sum() == 0 and "Receita total do Fundeb Realizada" in df.columns:
-        df["Fundeb_Base"] = get_any(["Receita total do Fundeb Realizada"], default=0.0)
+    # ---------------- Colunas derivadas ----------------
+    # Fundeb base: receita da contribuição (quando existir), senão total do Fundeb
+    if "Receita da contribuição de estados e municípios ao Fundeb" in df.columns:
+        df["Fundeb_Base"] = df["Receita da contribuição de estados e municípios ao Fundeb"]
+    elif "Receita total do Fundeb Realizada" in df.columns:
+        df["Fundeb_Base"] = df["Receita total do Fundeb Realizada"]
+    else:
+        df["Fundeb_Base"] = 0
 
-    # Complementações
-    df["Compl_VAAF"] = get_any(
-        ["Complementação VAAF", "Complementação da União-VAAF (R$)"],
-        default=0.0,
-    )
-    df["Compl_VAAT"] = get_any(
-        ["Complementação VAAT", "Complementação da União-VAAT (art. 16, VI) (R$)"],
-        default=0.0,
-    )
-    df["Compl_VAAR"] = get_any(
-        ["Complementação VAAR", "Complementação da União-VAAR (R$)"],
-        default=0.0,
+    # Complementações – aqui usamos as colunas "da União"
+    df["Compl_VAAF"] = 0  # ES não recebe VAAF, deixamos explícito
+    df["Compl_VAAT"] = df.get("Complementação da União-VAAT (art. 16, VI) (R$)", 0).fillna(0)
+    df["Compl_VAAR"] = df.get("Complementação da União-VAAR (R$)", 0).fillna(0)
+
+    df["Fundeb_Total"] = (
+        df["Fundeb_Base"] +
+        df["Compl_VAAF"] +
+        df["Compl_VAAT"] +
+        df["Compl_VAAR"]
     )
 
-    # ICMS e orçamento/ despesa
-    df["ICMS_Educacional"] = get_any(["ICMS Educacional"], default=0.0)
-    df["ICMS_CotaParte"] = get_any(["Cota-parte ICMS Realizada", "Cota-parte ICMS Realizada "], default=np.nan)
-    df["Orcamento_Total"] = get_any(["Orçamento"], default=np.nan)
-    df["Despesa_Educacao"] = get_any(["Despesa Educação"], default=np.nan)
+    df["ICMS_Educacional"] = df.get("ICMS Educacional", 0).fillna(0)
+    df["ICMS_CotaParte"] = df.get("Cota-parte ICMS Realizada", np.nan)
 
-    # VAAT mínimo e valores antes/depois (só para garantir que são numéricos)
-    if "VAAT Mínimo Brasil" in df.columns:
-        df["VAAT Mínimo Brasil"] = _coerce_numeric(df["VAAT Mínimo Brasil"])
-    if "VAAT anterior à Complementação-VAAT (art. 16, IV) (R$)" in df.columns:
-        df["VAAT anterior à Complementação-VAAT (art. 16, IV) (R$)"] = _coerce_numeric(
-            df["VAAT anterior à Complementação-VAAT (art. 16, IV) (R$)"]
-        )
-    if "VAAT com a Complementação da União-VAAT (art. 16, V) (R$)" in df.columns:
-        df["VAAT com a Complementação da União-VAAT (art. 16, V) (R$)"] = _coerce_numeric(
-            df["VAAT com a Complementação da União-VAAT (art. 16, V) (R$)"]
-        )
+    df["Orcamento_Total"] = df.get("Orçamento", np.nan)
+    df["Despesa_Educacao"] = df.get("Despesa Educação", np.nan)
 
-    # ------------------------------------------------------------------
-    # Colunas derivadas
-    # ------------------------------------------------------------------
-    df["Fundeb_Total"] = df["Fundeb_Base"] + df["Compl_VAAF"] + df["Compl_VAAT"] + df["Compl_VAAR"]
     df["Recursos_Educacao_Ampliados"] = df["Fundeb_Total"] + df["ICMS_Educacional"]
 
     df["Dep_Fundeb_orcamento"] = df["Fundeb_Total"] / df["Orcamento_Total"]
     df["Dep_Fundeb_despesa_educ"] = df["Fundeb_Total"] / df["Despesa_Educacao"]
 
-    # ------------------------------------------------------------------
-    # Merge com habilitação VAAT (se existir)
-    # ------------------------------------------------------------------
-    if not df_vaat_hab.empty and "Código IBGE" in df_vaat_hab.columns:
-        df_vaat_hab["Código IBGE"] = pd.to_numeric(
-            df_vaat_hab["Código IBGE"], errors="coerce"
-        ).astype("Int64")
-
-        if "Veficação  § 4º do art. 13 da  Lei nº 14.113/20" in df_vaat_hab.columns:
+    # Não estamos usando a aba "Habilitação VAAT 2026" neste painel,
+    # então apenas garantimos que, se algum dia entrar, não quebre nada.
+    abas = pd.ExcelFile(caminho_encontrado).sheet_names
+    if "Habilitação VAAT 2026" in abas:
+        df_vaat_hab = pd.read_excel(caminho_encontrado, sheet_name="Habilitação VAAT 2026")
+        if "Código IBGE" in df_vaat_hab.columns:
+            df_vaat_hab["Código IBGE"] = pd.to_numeric(
+                df_vaat_hab["Código IBGE"], errors="coerce"
+            ).astype("Int64")
             df = df.merge(
-                df_vaat_hab[
-                    ["Código IBGE", "Veficação  § 4º do art. 13 da  Lei nº 14.113/20"]
-                ],
+                df_vaat_hab[["Código IBGE", "Veficação  § 4º do art. 13 da  Lei nº 14.113/20"]],
                 on="Código IBGE",
-                how="left",
+                how="left"
             )
             df.rename(
-                columns={
-                    "Veficação  § 4º do art. 13 da  Lei nº 14.113/20": "Status_VAAT_2026"
-                },
-                inplace=True,
+                columns={"Veficação  § 4º do art. 13 da  Lei nº 14.113/20": "Status_VAAT_2026"},
+                inplace=True
             )
 
     return df
@@ -320,15 +307,10 @@ st.sidebar.image("assets/logotipo_zetta_branco.png", use_container_width=True)
 st.sidebar.title("Navegação")
 
 anos_disponiveis = sorted([int(a) for a in df["ANO"].dropna().unique()])
-ano_sel = st.sidebar.selectbox(
-    "Ano de análise", anos_disponiveis,
-    index=len(anos_disponiveis) - 1
-)
+ano_sel = st.sidebar.selectbox("Ano de análise", anos_disponiveis, index=len(anos_disponiveis)-1)
 
 municipios = sorted(df["MUNICÍPIO"].astype(str).unique())
-municipio_sel = st.sidebar.selectbox(
-    "Município (para análises focadas)", municipios
-)
+municipio_sel = st.sidebar.selectbox("Município (para análises focadas)", municipios)
 
 menu = st.sidebar.radio(
     "Escolha a seção:",
@@ -357,51 +339,35 @@ if menu == "📊 Visão geral dos recursos":
     else:
         # Agregados estaduais
         total_fundeb_base = df_ano["Fundeb_Base"].sum(skipna=True)
-        total_compl = (
-            df_ano["Compl_VAAF"] +
-            df_ano["Compl_VAAT"] +
-            df_ano["Compl_VAAR"]
-        ).sum(skipna=True)
+        total_compl = (df_ano["Compl_VAAF"] + df_ano["Compl_VAAT"] + df_ano["Compl_VAAR"]).sum(skipna=True)
         total_icms_educ = df_ano["ICMS_Educacional"].sum(skipna=True)
 
         total_orcamento = df_ano["Orcamento_Total"].sum(skipna=True)
         total_desp_educ = df_ano["Despesa_Educacao"].sum(skipna=True)
 
-        dep_fundeb_educ = (
-            total_fundeb_base / total_desp_educ
-            if total_desp_educ > 0 else np.nan
-        )
-        dep_fundeb_orc = (
-            total_fundeb_base / total_orcamento
-            if total_orcamento > 0 else np.nan
-        )
+        dep_fundeb_educ = total_fundeb_base / total_desp_educ if total_desp_educ > 0 else np.nan
+        dep_fundeb_orc = total_fundeb_base / total_orcamento if total_orcamento > 0 else np.nan
 
         c1, c2, c3 = st.columns(3)
         with c1:
             st.markdown(f"""
             <div class="big-card">
                 <h3>Fundeb base</h3>
-                <h1 style='font-size:34px;margin-top:-4px;'>
-                    {formatar_reais(total_fundeb_base)}
-                </h1>
+                <h1 style='font-size:34px;margin-top:-4px;'>{formatar_reais(total_fundeb_base)}</h1>
             </div>
             """, unsafe_allow_html=True)
         with c2:
             st.markdown(f"""
             <div class="big-card">
                 <h3>Complementações (VAAF + VAAT + VAAR)</h3>
-                <h1 style='font-size:34px;margin-top:-4px;'>
-                    {formatar_reais(total_compl)}
-                </h1>
+                <h1 style='font-size:34px;margin-top:-4px;'>{formatar_reais(total_compl)}</h1>
             </div>
             """, unsafe_allow_html=True)
         with c3:
             st.markdown(f"""
             <div class="big-card">
                 <h3>ICMS Educacional</h3>
-                <h1 style='font-size:34px;margin-top:-4px;'>
-                    {formatar_reais(total_icms_educ)}
-                </h1>
+                <h1 style='font-size:34px;margin-top:-4px;'>{formatar_reais(total_icms_educ)}</h1>
             </div>
             """, unsafe_allow_html=True)
 
@@ -430,30 +396,28 @@ if menu == "📊 Visão geral dos recursos":
             .dropna(subset=["ANO"])
             .sort_values("ANO")
         )
-        evol["Complementacoes"] = (
-            evol["Compl_VAAF"] +
-            evol["Compl_VAAT"] +
-            evol["Compl_VAAR"]
-        )
+        evol["Complementacoes"] = evol["Compl_VAAF"] + evol["Compl_VAAT"] + evol["Compl_VAAR"]
 
+        # >>> NOVO: gráfico de barras empilhadas em vez de linhas
         fig = go.Figure()
-        fig.add_trace(go.Scatter(
+        fig.add_trace(go.Bar(
             x=evol["ANO"], y=evol["Fundeb_Base"],
-            mode="lines+markers", name="Fundeb base"
+            name="Fundeb base"
         ))
-        fig.add_trace(go.Scatter(
+        fig.add_trace(go.Bar(
             x=evol["ANO"], y=evol["Complementacoes"],
-            mode="lines+markers", name="Complementações (VAAF+VAAT+VAAR)"
+            name="Complementações (VAAF+VAAT+VAAR)"
         ))
-        fig.add_trace(go.Scatter(
+        fig.add_trace(go.Bar(
             x=evol["ANO"], y=evol["ICMS_Educacional"],
-            mode="lines+markers", name="ICMS Educacional"
+            name="ICMS Educacional"
         ))
         fig.update_layout(
             template="simple_white",
             height=420,
             xaxis_title="Ano",
             yaxis_title="Valor (R$)",
+            barmode="stack",
             title="Evolução dos principais recursos educacionais (Estado + municípios do ES)"
         )
         st.plotly_chart(fig, use_container_width=True)
@@ -501,8 +465,7 @@ elif menu == "💰 Fundeb – Diagnóstico":
 
         st.markdown("#### Tabela – Fundeb base, complementações e total (com variações ano a ano)")
 
-        base_tab = df_mun[["ANO", "Fundeb_Base",
-                           "Complementacoes", "Fundeb_Total"]].copy()
+        base_tab = df_mun[["ANO", "Fundeb_Base", "Complementacoes", "Fundeb_Total"]].copy()
         base_tab = base_tab.sort_values("ANO")
 
         base_tab["Dif_abs_Base"] = base_tab["Fundeb_Base"].diff()
@@ -566,7 +529,7 @@ elif menu == "🏛️ Complementações da União (VAAT & VAAR)":
     st.info(
         "O Espírito Santo, por não estar abaixo do valor mínimo por aluno do VAAF, "
         "não recebe a complementação VAAF – nem o Estado, nem seus municípios. "
-        "Por isso, a complementação VAAF é mantida como zero nesta base."
+        "Por isso, os valores de VAAF permanecem zerados nesta base."
     )
 
     if df_ano.empty:
@@ -621,9 +584,16 @@ elif menu == "🏛️ Complementações da União (VAAT & VAAR)":
         ]:
             df_vaat_tab[c] = df_vaat_tab[c].map(formatar_reais)
 
-        st.dataframe(df_vaat_tab, use_container_width=True, hide_index=True)
+        # >>> NOVO: data_editor desabilitado, permitindo ordenar clicando no cabeçalho
+        st.data_editor(
+            df_vaat_tab,
+            use_container_width=True,
+            hide_index=True,
+            disabled=True,
+            key="tabela_vaat"
+        )
 
-        # Estatísticas VAAT
+        # Estatísticas VAAT (mín, mediana, média, máx + município selecionado)
         st.markdown("#### Estatísticas da complementação VAAT")
         valores_vaat_validos = df_vaat["Compl_VAAT"][df_vaat["Compl_VAAT"] > 0]
         if not valores_vaat_validos.empty:
@@ -631,9 +601,7 @@ elif menu == "🏛️ Complementações da União (VAAT & VAAR)":
             media_vaat = valores_vaat_validos.mean()
             minimo_vaat = valores_vaat_validos.min()
             maximo_vaat = valores_vaat_validos.max()
-            valor_mun_vaat = df_vaat.loc[
-                df_vaat["MUNICÍPIO"] == municipio_sel, "Compl_VAAT"
-            ]
+            valor_mun_vaat = df_vaat.loc[df_vaat["MUNICÍPIO"] == municipio_sel, "Compl_VAAT"]
             valor_mun_vaat = float(valor_mun_vaat.iloc[0]) if not valor_mun_vaat.empty else np.nan
 
             c1, c2, c3, c4, c5 = st.columns(5)
@@ -642,6 +610,59 @@ elif menu == "🏛️ Complementações da União (VAAT & VAAR)":
             c3.metric("Média", formatar_reais(media_vaat))
             c4.metric("Máximo", formatar_reais(maximo_vaat))
             c5.metric(f"{municipio_sel}", formatar_reais(valor_mun_vaat))
+
+            # >>> NOVO: “reguinha” visual tipo bullet chart
+            st.markdown("##### Distribuição visual dos valores de VAAT (entre os que recebem)")
+            fig_vaat_stats = go.Figure()
+
+            # Faixa de fundo (0 a máximo)
+            fig_vaat_stats.add_trace(go.Bar(
+                x=[maximo_vaat],
+                y=["VAAT"],
+                orientation="h",
+                marker=dict(color="rgba(106,27,154,0.15)"),
+                showlegend=False,
+                hoverinfo="skip"
+            ))
+
+            # Marcadores
+            fig_vaat_stats.add_trace(go.Scatter(
+                x=[minimo_vaat], y=["VAAT"],
+                mode="markers",
+                marker=dict(color="#6A1B9A", size=10, symbol="circle"),
+                name="Mínimo"
+            ))
+            fig_vaat_stats.add_trace(go.Scatter(
+                x=[med_vaat], y=["VAAT"],
+                mode="markers",
+                marker=dict(color="#311B92", size=11, symbol="diamond"),
+                name="Mediana"
+            ))
+            fig_vaat_stats.add_trace(go.Scatter(
+                x=[media_vaat], y=["VAAT"],
+                mode="markers",
+                marker=dict(color="#4527A0", size=11, symbol="square"),
+                name="Média"
+            ))
+            if pd.notna(valor_mun_vaat):
+                fig_vaat_stats.add_trace(go.Scatter(
+                    x=[valor_mun_vaat], y=["VAAT"],
+                    mode="markers+text",
+                    marker=dict(color="#D500F9", size=12, symbol="triangle-up"),
+                    text=[municipio_sel],
+                    textposition="top center",
+                    name=f"{municipio_sel}"
+                ))
+
+            fig_vaat_stats.update_layout(
+                template="simple_white",
+                height=220,
+                xaxis_title="Valor da complementação VAAT (R$)",
+                yaxis_showticklabels=False,
+                margin=dict(l=40, r=10, t=20, b=40),
+            )
+            st.plotly_chart(fig_vaat_stats, use_container_width=True)
+
         else:
             st.info("Nenhum município recebeu VAAT no ano selecionado na base utilizada.")
 
@@ -653,6 +674,7 @@ elif menu == "🏛️ Complementações da União (VAAT & VAAR)":
             .astype(str)
             .str.zfill(7)
         )
+        # zeros viram NaN para ficarem sem cor
         df_vaat_mapa["Compl_VAAT_plot"] = df_vaat_mapa["Compl_VAAT"].replace(0, np.nan)
 
         fig_vaat_mapa = px.choropleth(
@@ -665,7 +687,12 @@ elif menu == "🏛️ Complementações da União (VAAT & VAAR)":
             color_continuous_scale="Purples",
             labels={"Compl_VAAT_plot": "VAAT (R$)"},
         )
-        fig_vaat_mapa.update_geos(fitbounds="locations", visible=False)
+        fig_vaat_mapa.update_geos(
+            fitbounds="locations",
+            visible=False,
+            lonaxis_range=[-41.5, -39.0],
+            lataxis_range=[-21.5, -18.0],
+        )
         fig_vaat_mapa.update_layout(
             margin=dict(t=0, b=0, l=0, r=0),
             height=500,
@@ -678,12 +705,9 @@ elif menu == "🏛️ Complementações da União (VAAT & VAAR)":
 
         df_vaar = df_ano.copy()
         df_vaar["Recebe_VAAR"] = df_vaar["Compl_VAAR"] > 0
-        df_vaar["Status_VAAR"] = np.where(
-            df_vaar["Recebe_VAAR"],
-            "Habilitado (recebeu VAAR)",
-            "Não habilitado"
-        )
+        df_vaar["Status_VAAR"] = np.where(df_vaar["Recebe_VAAR"], "Habilitado (recebeu VAAR)", "Não habilitado")
 
+        # Cards para VAAR
         col_vaar1, col_vaar2 = st.columns([1.4, 1])
         with col_vaar1:
             qtde_recebe_vaar = int(df_vaar["Recebe_VAAR"].sum())
@@ -711,7 +735,13 @@ elif menu == "🏛️ Complementações da União (VAAT & VAAR)":
             lambda v: formatar_reais(v) if v > 0 else "-"
         )
 
-        st.dataframe(rank_vaar_exib, use_container_width=True, hide_index=True)
+        st.data_editor(
+            rank_vaar_exib,
+            use_container_width=True,
+            hide_index=True,
+            disabled=True,
+            key="tabela_vaar"
+        )
 
         st.markdown("#### Disparidade nos valores de VAAR recebidos")
         valores_validos = df_vaar["Compl_VAAR"][df_vaar["Compl_VAAR"] > 0]
@@ -720,9 +750,7 @@ elif menu == "🏛️ Complementações da União (VAAT & VAAR)":
             media = valores_validos.mean()
             minimo = valores_validos.min()
             maximo = valores_validos.max()
-            valor_mun_vaar = df_vaar.loc[
-                df_vaar["MUNICÍPIO"] == municipio_sel, "Compl_VAAR"
-            ]
+            valor_mun_vaar = df_vaar.loc[df_vaar["MUNICÍPIO"] == municipio_sel, "Compl_VAAR"]
             valor_mun_vaar = float(valor_mun_vaar.iloc[0]) if not valor_mun_vaar.empty else np.nan
 
             c1, c2, c3, c4, c5 = st.columns(5)
@@ -731,6 +759,55 @@ elif menu == "🏛️ Complementações da União (VAAT & VAAR)":
             c3.metric("Média", formatar_reais(media))
             c4.metric("Máximo", formatar_reais(maximo))
             c5.metric(f"{municipio_sel}", formatar_reais(valor_mun_vaar))
+
+            st.markdown("##### Distribuição visual dos valores de VAAR (entre os que recebem)")
+            fig_vaar_stats = go.Figure()
+
+            fig_vaar_stats.add_trace(go.Bar(
+                x=[maximo],
+                y=["VAAR"],
+                orientation="h",
+                marker=dict(color="rgba(142,36,170,0.15)"),
+                showlegend=False,
+                hoverinfo="skip"
+            ))
+            fig_vaar_stats.add_trace(go.Scatter(
+                x=[minimo], y=["VAAR"],
+                mode="markers",
+                marker=dict(color="#8E24AA", size=10, symbol="circle"),
+                name="Mínimo"
+            ))
+            fig_vaar_stats.add_trace(go.Scatter(
+                x=[med], y=["VAAR"],
+                mode="markers",
+                marker=dict(color="#5E35B1", size=11, symbol="diamond"),
+                name="Mediana"
+            ))
+            fig_vaar_stats.add_trace(go.Scatter(
+                x=[media], y=["VAAR"],
+                mode="markers",
+                marker=dict(color="#3949AB", size=11, symbol="square"),
+                name="Média"
+            ))
+            if pd.notna(valor_mun_vaar):
+                fig_vaar_stats.add_trace(go.Scatter(
+                    x=[valor_mun_vaar], y=["VAAR"],
+                    mode="markers+text",
+                    marker=dict(color="#D500F9", size=12, symbol="triangle-up"),
+                    text=[municipio_sel],
+                    textposition="top center",
+                    name=f"{municipio_sel}"
+                ))
+
+            fig_vaar_stats.update_layout(
+                template="simple_white",
+                height=220,
+                xaxis_title="Valor da complementação VAAR (R$)",
+                yaxis_showticklabels=False,
+                margin=dict(l=40, r=10, t=20, b=40),
+            )
+            st.plotly_chart(fig_vaar_stats, use_container_width=True)
+
         else:
             st.info("Nenhum município recebeu VAAR no ano selecionado na base utilizada.")
 
@@ -754,7 +831,12 @@ elif menu == "🏛️ Complementações da União (VAAT & VAAR)":
             color_continuous_scale="Tealrose",
             labels={"Compl_VAAR_plot": "VAAR (R$)"},
         )
-        fig_vaar_mapa.update_geos(fitbounds="locations", visible=False)
+        fig_vaar_mapa.update_geos(
+            fitbounds="locations",
+            visible=False,
+            lonaxis_range=[-41.5, -39.0],
+            lataxis_range=[-21.5, -18.0],
+        )
         fig_vaar_mapa.update_layout(
             margin=dict(t=0, b=0, l=0, r=0),
             height=500,
@@ -771,21 +853,35 @@ elif menu == "📈 Comparativos e cruzamentos":
     if df_ano.empty:
         st.warning("Não há dados para o ano selecionado.")
     else:
+        # --------------------------------------------------------
+        # Seleção de quantidade de municípios (para melhorar leitura)
+        # --------------------------------------------------------
+        n_total = len(df_ano)
+        n_default = min(20, n_total)
+        qtd_mun = st.slider(
+            "Quantidade de municípios a exibir (ordenados pelo total de recursos):",
+            min_value=5,
+            max_value=n_total,
+            value=n_default,
+            step=1,
+        )
+
+        df_base = df_ano.copy()
+        df_base["Complementacoes"] = (
+            df_base["Compl_VAAF"] +
+            df_base["Compl_VAAT"] +
+            df_base["Compl_VAAR"]
+        )
+        df_base["Total_Receitas_Chave"] = df_base["Fundeb_Total"] + df_base["ICMS_Educacional"]
+
+        df_top = df_base.sort_values("Total_Receitas_Chave", ascending=False).head(qtd_mun)
+
+        # --------------------------------------------------------
         # A) TABELA – Fundeb base, complementações, ICMS e total
+        # --------------------------------------------------------
         st.markdown("### Tabela – Recursos educacionais por município")
 
-        df_comp_tab = df_ano.copy()
-        df_comp_tab["Complementacoes"] = (
-            df_comp_tab["Compl_VAAF"] +
-            df_comp_tab["Compl_VAAT"] +
-            df_comp_tab["Compl_VAAR"]
-        )
-        df_comp_tab["Total_Receitas_Chave"] = (
-            df_comp_tab["Fundeb_Total"] +
-            df_comp_tab["ICMS_Educacional"]
-        )
-
-        tab_exib = df_comp_tab[[
+        tab_exib = df_top[[
             "MUNICÍPIO",
             "Fundeb_Base",
             "Complementacoes",
@@ -808,13 +904,12 @@ elif menu == "📈 Comparativos e cruzamentos":
 
         st.dataframe(tab_exib.set_index("Município"), use_container_width=True)
 
-        # B) GRÁFICO – Barras empilhadas horizontais (todos muníc.)
+        # --------------------------------------------------------
+        # B) GRÁFICO – Barras empilhadas horizontais (subset)
+        # --------------------------------------------------------
         st.markdown("### Gráfico – Composição dos recursos educacionais por município")
 
-        df_tot = df_ano.copy()
-        df_tot["Total_Receitas_Chave"] = (
-            df_tot["Fundeb_Total"] + df_tot["ICMS_Educacional"]
-        )
+        df_tot = df_top.copy()
         df_tot = df_tot.sort_values("Total_Receitas_Chave", ascending=True)
 
         def cores_por_municipio(series_mun, cor_normal, cor_dest):
@@ -829,53 +924,46 @@ elif menu == "📈 Comparativos e cruzamentos":
             x=df_tot["Fundeb_Base"],
             name="Fundeb base",
             orientation="h",
-            marker=dict(color=cores_por_municipio(
-                df_tot["MUNICÍPIO"], "#C2A4CF", "#3A0057"
-            )),
+            marker=dict(color=cores_por_municipio(df_tot["MUNICÍPIO"], "#C2A4CF", "#3A0057")),
         ))
         fig_bar.add_trace(go.Bar(
             y=df_tot["MUNICÍPIO"],
             x=df_tot["Compl_VAAT"],
             name="Compl. VAAT",
             orientation="h",
-            marker=dict(color=cores_por_municipio(
-                df_tot["MUNICÍPIO"], "#B3E6FF", "#0077B6"
-            )),
+            marker=dict(color=cores_por_municipio(df_tot["MUNICÍPIO"], "#B3E6FF", "#0077B6")),
         ))
         fig_bar.add_trace(go.Bar(
             y=df_tot["MUNICÍPIO"],
             x=df_tot["Compl_VAAR"],
             name="Compl. VAAR",
             orientation="h",
-            marker=dict(color=cores_por_municipio(
-                df_tot["MUNICÍPIO"], "#FFE0B2", "#FF8C00"
-            )),
+            marker=dict(color=cores_por_municipio(df_tot["MUNICÍPIO"], "#FFE0B2", "#FF8C00")),
         ))
         fig_bar.add_trace(go.Bar(
             y=df_tot["MUNICÍPIO"],
             x=df_tot["ICMS_Educacional"],
             name="ICMS Educacional",
             orientation="h",
-            marker=dict(color=cores_por_municipio(
-                df_tot["MUNICÍPIO"], "#D0F0C0", "#228B22"
-            )),
+            marker=dict(color=cores_por_municipio(df_tot["MUNICÍPIO"], "#D0F0C0", "#228B22")),
         ))
         fig_bar.update_layout(
             barmode="stack",
             template="simple_white",
-            height=800,
+            height=max(400, 20 * len(df_tot)),  # altura cresce com nº de municípios
             title=f"Recursos educacionais por município – {ano_sel}",
             xaxis_title="Valor (R$)",
             yaxis_title="Município",
-            legend=dict(orientation="h", yanchor="bottom",
-                        y=1.02, x=0.0)
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0.0)
         )
         st.plotly_chart(fig_bar, use_container_width=True)
 
-        # C) Estrutura percentual dos recursos
+        # --------------------------------------------------------
+        # C) Estrutura percentual dos recursos (mesmo subset)
+        # --------------------------------------------------------
         st.markdown("### Estrutura percentual dos recursos educacionais por município")
 
-        df_dep = df_ano.copy()
+        df_dep = df_top.copy()
         df_dep["Total_Recursos"] = (
             df_dep["Fundeb_Base"] +
             df_dep["Compl_VAAT"] +
@@ -889,12 +977,7 @@ elif menu == "📈 Comparativos e cruzamentos":
 
         df_long = df_dep.melt(
             id_vars=["MUNICÍPIO"],
-            value_vars=[
-                "perc_Fundeb_Base",
-                "perc_Compl_VAAT",
-                "perc_Compl_VAAR",
-                "perc_ICMS_Educacional"
-            ],
+            value_vars=["perc_Fundeb_Base", "perc_Compl_VAAT", "perc_Compl_VAAR", "perc_ICMS_Educacional"],
             var_name="Fonte",
             value_name="Percentual"
         )
@@ -911,24 +994,20 @@ elif menu == "📈 Comparativos e cruzamentos":
             x="Percentual",
             color="Fonte",
             orientation="h",
-            labels={
-                "MUNICÍPIO": "Município",
-                "Percentual": "Participação no total de recursos"
-            },
+            labels={"MUNICÍPIO": "Município", "Percentual": "Participação no total de recursos"},
         )
         fig_stack.update_layout(
             template="simple_white",
-            height=1000,
+            height=max(500, 25 * len(df_dep)),
             xaxis_tickformat=".0%",
             title="Estrutura percentual dos recursos educacionais por município",
-            legend=dict(orientation="h", yanchor="bottom",
-                        y=1.02, x=0.0)
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0.0)
         )
         fig_stack.update_yaxes(automargin=True)
         st.plotly_chart(fig_stack, use_container_width=True)
 
 # ================================================================
-# BLOCO 8 – SEÇÃO: MAPA ESTADUAL (VISÃO CONCEITUAL)
+# BLOCO 8 – SEÇÃO: MAPA ESTADUAL (AGORA REAL)
 # ================================================================
 elif menu == "🗺️ Mapa estadual (visão conceitual)":
     st.title("🗺️ Mapa estadual – recursos educacionais")
@@ -939,8 +1018,7 @@ elif menu == "🗺️ Mapa estadual (visão conceitual)":
         st.markdown("Escolha qual indicador deseja visualizar no mapa:")
 
         opcoes_indicador = {
-            "Fundeb base (Receita da contribuição de estados e municípios ao Fundeb)":
-                "Fundeb_Base",
+            "Fundeb base (Receita da contribuição de estados e municípios ao Fundeb)": "Fundeb_Base",
             "Complementações (VAAF + VAAT + VAAR)": "Compl_Total",
             "Fundeb total (base + complementações)": "Fundeb_Total",
             "ICMS Educacional": "ICMS_Educacional",
@@ -977,7 +1055,12 @@ elif menu == "🗺️ Mapa estadual (visão conceitual)":
             color_continuous_scale="Viridis",
             labels={"valor_plot": "Valor (R$)"},
         )
-        fig_mapa.update_geos(fitbounds="locations", visible=False)
+        fig_mapa.update_geos(
+            fitbounds="locations",
+            visible=False,
+            lonaxis_range=[-41.5, -39.0],
+            lataxis_range=[-21.5, -18.0],
+        )
         fig_mapa.update_layout(
             margin=dict(t=0, b=0, l=0, r=0),
             height=520,
@@ -1014,19 +1097,15 @@ elif menu == "💡 Insights automáticos":
                         queda_mun.append(mun)
             if queda_mun:
                 insights.append(
-                    f"- ⚠️ **Fundeb em queda contínua nos últimos 3 anos** "
-                    f"em: {', '.join(sorted(queda_mun))}."
+                    f"- ⚠️ **Fundeb em queda contínua nos últimos 3 anos** em: {', '.join(sorted(queda_mun))}."
                 )
 
         # 2) Municípios não habilitados ao VAAR (sem recebimento)
         df_vaar_ano = df_ano.copy()
-        nao_hab = df_vaar_ano.loc[
-            df_vaar_ano["Compl_VAAR"] <= 0, "MUNICÍPIO"
-        ].tolist()
+        nao_hab = df_vaar_ano.loc[df_vaar_ano["Compl_VAAR"] <= 0, "MUNICÍPIO"].tolist()
         if nao_hab:
             insights.append(
-                f"- 🚫 **Municípios que não receberam VAAR em {ano_sel}** "
-                f"(podem estar deixando recursos na mesa): "
+                f"- 🚫 **Municípios que não receberam VAAR em {ano_sel}** (podem estar deixando recursos na mesa): "
                 f"{', '.join(sorted(nao_hab))}."
             )
 
@@ -1035,20 +1114,16 @@ elif menu == "💡 Insights automáticos":
         if not dep_alta.empty:
             lista = dep_alta["MUNICÍPIO"].tolist()
             insights.append(
-                "- 📌 **Municípios em que o Fundeb representa 50% ou mais "
-                "da despesa em educação**: "
+                f"- 📌 **Municípios em que o Fundeb representa 50% ou mais da despesa em educação**: "
                 f"{', '.join(sorted(lista))}."
             )
 
         # 4) Municípios com ICMS Educacional relativamente baixo (1º quartil)
         q1_icms = df_ano["ICMS_Educacional"].quantile(0.25)
-        icms_baixo = df_ano[
-            df_ano["ICMS_Educacional"] <= q1_icms
-        ]["MUNICÍPIO"].tolist()
+        icms_baixo = df_ano[df_ano["ICMS_Educacional"] <= q1_icms]["MUNICÍPIO"].tolist()
         if icms_baixo:
             insights.append(
-                "- 💡 **Municípios com ICMS Educacional relativamente baixo "
-                "(até o 1º quartil)**: "
+                "- 💡 **Municípios com ICMS Educacional relativamente baixo (até o 1º quartil)**: "
                 f"{', '.join(sorted(icms_baixo))}."
             )
 
@@ -1057,11 +1132,8 @@ elif menu == "💡 Insights automáticos":
             for item in insights:
                 st.markdown(item)
         else:
-            st.info(
-                "Não foram identificados alertas relevantes com as regras atuais. "
-                "Mesmo assim, o painel pode ser explorado para identificar "
-                "oportunidades específicas."
-            )
+            st.info("Não foram identificados alertas relevantes com as regras atuais. Mesmo assim, o painel "
+                    "pode ser explorado para identificar oportunidades específicas.")
 
 # ================================================================
 # BLOCO 10 – SEÇÃO: DOWNLOADS
@@ -1074,9 +1146,7 @@ elif menu == "📎 Downloads":
     em Excel, R, Python ou qualquer outra ferramenta.
     """)
 
-    csv_completo = df.to_csv(
-        index=False, sep=";", decimal=","
-    ).encode("utf-8-sig")
+    csv_completo = df.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig")
 
     st.download_button(
         "⬇️ Baixar base completa (todos os anos e municípios)",
@@ -1086,9 +1156,7 @@ elif menu == "📎 Downloads":
     )
 
     if not df_ano.empty:
-        csv_ano = df_ano.to_csv(
-            index=False, sep=";", decimal=","
-        ).encode("utf-8-sig")
+        csv_ano = df_ano.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig")
         st.download_button(
             f"⬇️ Baixar base filtrada para {ano_sel}",
             data=csv_ano,
@@ -1103,12 +1171,8 @@ st.markdown(
     """
     <hr style='margin-top:40px;'>
     <div style='text-align:center; color:#7E7E7E; font-size:13px;'>
-        Desenvolvido por <b>Zetta Inteligência em Dados</b> · Painel Fundeb,
-        Complementações & ICMS · 2025
+        Desenvolvido por <b>Zetta Inteligência em Dados</b> · Painel Fundeb, Complementações & ICMS · 2025
     </div>
     """,
     unsafe_allow_html=True
 )
-
-
-
