@@ -105,12 +105,13 @@ html, body, [class*="css"] {
 # ================================================================
 @st.cache_data(show_spinner=True)
 def carregar_dados():
+    import os
     import pandas as pd
     import numpy as np
-    import os
 
     nome_arquivo = "loa.xlsx"
 
+    # Caminhos possíveis (mesmo nível ou pasta data/)
     caminhos_possiveis = [
         nome_arquivo,
         os.path.join("data", nome_arquivo),
@@ -126,215 +127,151 @@ def carregar_dados():
             break
 
     if caminho_encontrado is None:
-        st.error(f"""
-        ❌ Arquivo não encontrado.
-
-        Coloque o arquivo:
-        **{nome_arquivo}**
-
-        ➤ na mesma pasta do *fundeb.py*  
-        **OU**  
-        ➤ dentro da pasta **data/** ou **dados/**.
-        """)
+        st.error(
+            f"❌ Arquivo {nome_arquivo} não encontrado.\n\n"
+            "Coloque o arquivo na mesma pasta do fundeb.py ou dentro da pasta data/."
+        )
         st.stop()
 
-    # Carrega planilha principal
+    # ------------------------------------------------------------------
+    # LÊ A PLANILHA PRINCIPAL
+    # ------------------------------------------------------------------
     df = pd.read_excel(caminho_encontrado, sheet_name="Planilha1")
 
-    # Tira espaços extras dos nomes das colunas
-        df.columns = [c.strip() for c in df.columns]
+    # Tira espaços extras nos nomes das colunas
+    df.columns = [c.strip() for c in df.columns]
 
-        # -----------------------------------------------------------
-        # Normalizar colunas numéricas do Excel (converter textos → número)
-        # -----------------------------------------------------------
-        def to_number(x):
-            if pd.isna(x):
-                return 0
-            x = str(x).strip()
-        
-            # Remove "R$"
-            x = x.replace("R$", "").replace("r$", "")
-        
-            # Corrige separadores brasileiros
-            x = x.replace(".", "").replace(",", ".")
-        
-            # Agora converte
-            try:
-                return float(x)
-            except:
-                return 0
-        
-        colunas_numericas = [
-            "Orçamento",
-            "Despesa Educação",
-            "Receita Cota-parte ICMS Estimada",
-            "Receita Fundeb Estimada",
-            "Cota-parte ICMS Realizada",
-            "ICMS Educacional",
-            "Representatividade do ICMS Educacional",
-            "Receita da contribuição de estados e municípios ao Fundeb",
-            "Complementação VAAF",
-            "Complementação VAAT",
-            "Complementação VAAR",
-            "VAAT anterior à Complementação-VAAT (art. 16, IV) (R$)",
-            "VAAT com a Complementação da União-VAAT (art. 16, V) (R$)",
-        ]
-        
-        for c in colunas_numericas:
-            if c in df.columns:
-                df[c] = df[c].apply(to_number)
-        
-            # Descobre abas disponíveis (para habilitação VAAT 2026, se existir)
-            abas = pd.ExcelFile(caminho_encontrado).sheet_names
-            if "Habilitação VAAT 2026" in abas:
-                df_vaat_hab = pd.read_excel(
-                    caminho_encontrado,
-                    sheet_name="Habilitação VAAT 2026"
-                )
-            else:
-                df_vaat_hab = pd.DataFrame()
-        
-    # ---------------- Função de conversão numérica inteligente ----------------
-    def _coerce_numeric(col):
+    # Lê abas disponíveis (para habilitação VAAT 2026, se existir)
+    abas = pd.ExcelFile(caminho_encontrado).sheet_names
+    if "Habilitação VAAT 2026" in abas:
+        df_vaat_hab = pd.read_excel(caminho_encontrado, sheet_name="Habilitação VAAT 2026")
+    else:
+        df_vaat_hab = pd.DataFrame()
+
+    # ------------------------------------------------------------------
+    # Função para converter qualquer coluna numérica (R$, pt-BR, etc.)
+    # ------------------------------------------------------------------
+    def _coerce_numeric(series):
         """
-        Converte para número aceitando:
-        - Formato BR: 1.234,56   (usa vírgula)
-        - Formato "padrão": 4067327.36 (sem vírgula, ponto como decimal)
-        - Remove 'R$', espaços, traços, etc.
+        Converte série para número aceitando:
+        - 1.234,56 (pt-BR)
+        - 123456.78 (padrão)
+        - remove 'R$', traços, strings vazias etc.
         """
-        if pd.api.types.is_numeric_dtype(col):
-            return col
+        if pd.api.types.is_numeric_dtype(series):
+            return series
 
-        col = col.astype(str)
-        col = col.str.replace("R$", "", regex=False)
-        col = col.str.strip()
+        s = series.astype(str)
+        s = s.str.replace("R$", "", regex=False).str.strip()
 
-        # Se tiver vírgula, tratamos como formato brasileiro
-        mask_comma = col.str.contains(",", regex=False)
+        # onde tiver vírgula, trata como padrão brasileiro
+        mask_comma = s.str.contains(",", regex=False)
 
-        col2 = col.copy()
-        # Formato BR: 1.234,56 -> 1234.56
-        col2[mask_comma] = (
-            col2[mask_comma]
+        s2 = s.copy()
+        s2[mask_comma] = (
+            s2[mask_comma]
             .str.replace(".", "", regex=False)
             .str.replace(",", ".", regex=False)
         )
-        # Onde NÃO tiver vírgula, deixamos o ponto como decimal, se houver
-        col2[~mask_comma] = col2[~mask_comma]
+        # onde NÃO tem vírgula, deixa como está
+        s2[~mask_comma] = s2[~mask_comma]
 
-        col2 = col2.replace(
-            {"-": np.nan, "--": np.nan, "nan": np.nan,
-             "None": np.nan, "": np.nan}
+        s2 = s2.replace(
+            {"-": np.nan, "--": np.nan, "nan": np.nan, "None": np.nan, "": np.nan}
         )
-        return pd.to_numeric(col2, errors="coerce")
 
-    # Lista de colunas que devem ser numéricas
-    num_cols = [
-        "Orçamento",
-        "Despesa Educação",
-        "Receita Cota-parte ICMS Estimada",
-        "Receita Fundeb Estimada",
-        "Cota-parte ICMS Realizada",
-        "ICMS Educacional",
-        "Receita da contribuição de estados e municípios ao Fundeb",
-        "Complementação VAAF",
-        "Complementação VAAT",
-        "Complementação VAAR",
-        "VAAT Mínimo Brasil",
-        "VAAT anterior à Complementação-VAAT (art. 16, IV) (R$)",
-        "VAAT com a Complementação da União-VAAT (art. 16, V) (R$)",
-    ]
+        return pd.to_numeric(s2, errors="coerce")
 
-    for c in num_cols:
-        if c in df.columns:
-            df[c] = _coerce_numeric(df[c])
+    # Helper: pega a primeira coluna que existir da lista
+    def get_any(colunas, default=0.0):
+        for nome in colunas:
+            if nome in df.columns:
+                return _coerce_numeric(df[nome]).fillna(0)
+        # se nenhuma existir, devolve série zerada
+        return pd.Series(default, index=df.index, dtype="float64")
 
-    # ANO e Código IBGE como números inteiros
+    # ------------------------------------------------------------------
+    # Padroniza colunas-chave (aceita versões diferentes do arquivo)
+    # ------------------------------------------------------------------
+    # Ano e código IBGE
     if "ANO" in df.columns:
         df["ANO"] = pd.to_numeric(df["ANO"], errors="coerce").astype("Int64")
     if "Código IBGE" in df.columns:
-        df["Código IBGE"] = pd.to_numeric(
-            df["Código IBGE"], errors="coerce"
-        ).astype("Int64")
+        df["Código IBGE"] = pd.to_numeric(df["Código IBGE"], errors="coerce").astype("Int64")
 
-    # ---------------- Colunas derivadas ----------------
+    # Fundeb base:
+    # 1) tenta "Receita da contribuição de estados e municípios ao Fundeb"
+    # 2) se for tudo zero e existir "Receita total do Fundeb Realizada", usa ela
+    df["Fundeb_Base"] = get_any(
+        ["Receita da contribuição de estados e municípios ao Fundeb"],
+        default=0.0,
+    )
+    if df["Fundeb_Base"].fillna(0).sum() == 0 and "Receita total do Fundeb Realizada" in df.columns:
+        df["Fundeb_Base"] = get_any(["Receita total do Fundeb Realizada"], default=0.0)
 
-    # Fundeb base = Receita da contribuição de estados e municípios ao Fundeb
-    if "Receita da contribuição de estados e municípios ao Fundeb" in df.columns:
-        df["Fundeb_Base"] = df["Receita da contribuição de estados e municípios ao Fundeb"].fillna(0)
-    else:
-        df["Fundeb_Base"] = 0.0
-
-    # Complementação VAAF -> vamos considerar sempre zero (ES não recebe VAAF)
-    df["Compl_VAAF"] = 0.0
-
-    # Complementação VAAT
-    if "Complementação VAAT" in df.columns:
-        df["Compl_VAAT"] = df["Complementação VAAT"].fillna(0)
-    else:
-        df["Compl_VAAT"] = 0.0
-
-    # Complementação VAAR
-    if "Complementação VAAR" in df.columns:
-        df["Compl_VAAR"] = df["Complementação VAAR"].fillna(0)
-    else:
-        df["Compl_VAAR"] = 0.0
-
-    # Fundeb Total = base + complementações
-    df["Fundeb_Total"] = (
-        df["Fundeb_Base"] +
-        df["Compl_VAAF"] +
-        df["Compl_VAAT"] +
-        df["Compl_VAAR"]
+    # Complementações
+    df["Compl_VAAF"] = get_any(
+        ["Complementação VAAF", "Complementação da União-VAAF (R$)"],
+        default=0.0,
+    )
+    df["Compl_VAAT"] = get_any(
+        ["Complementação VAAT", "Complementação da União-VAAT (art. 16, VI) (R$)"],
+        default=0.0,
+    )
+    df["Compl_VAAR"] = get_any(
+        ["Complementação VAAR", "Complementação da União-VAAR (R$)"],
+        default=0.0,
     )
 
-    # ICMS Educacional
-    if "ICMS Educacional" in df.columns:
-        df["ICMS_Educacional"] = df["ICMS Educacional"].fillna(0)
-    else:
-        df["ICMS_Educacional"] = 0.0
+    # ICMS e orçamento/ despesa
+    df["ICMS_Educacional"] = get_any(["ICMS Educacional"], default=0.0)
+    df["ICMS_CotaParte"] = get_any(["Cota-parte ICMS Realizada", "Cota-parte ICMS Realizada "], default=np.nan)
+    df["Orcamento_Total"] = get_any(["Orçamento"], default=np.nan)
+    df["Despesa_Educacao"] = get_any(["Despesa Educação"], default=np.nan)
 
-    # ICMS Cota-parte realizada
-    if "Cota-parte ICMS Realizada" in df.columns:
-        df["ICMS_CotaParte"] = df["Cota-parte ICMS Realizada"]
-    else:
-        df["ICMS_CotaParte"] = np.nan
+    # VAAT mínimo e valores antes/depois (só para garantir que são numéricos)
+    if "VAAT Mínimo Brasil" in df.columns:
+        df["VAAT Mínimo Brasil"] = _coerce_numeric(df["VAAT Mínimo Brasil"])
+    if "VAAT anterior à Complementação-VAAT (art. 16, IV) (R$)" in df.columns:
+        df["VAAT anterior à Complementação-VAAT (art. 16, IV) (R$)"] = _coerce_numeric(
+            df["VAAT anterior à Complementação-VAAT (art. 16, IV) (R$)"]
+        )
+    if "VAAT com a Complementação da União-VAAT (art. 16, V) (R$)" in df.columns:
+        df["VAAT com a Complementação da União-VAAT (art. 16, V) (R$)"] = _coerce_numeric(
+            df["VAAT com a Complementação da União-VAAT (art. 16, V) (R$)"]
+        )
 
-    # Orçamento total e despesa em educação
-    df["Orcamento_Total"] = df.get("Orçamento", np.nan)
-    df["Despesa_Educacao"] = df.get("Despesa Educação", np.nan)
+    # ------------------------------------------------------------------
+    # Colunas derivadas
+    # ------------------------------------------------------------------
+    df["Fundeb_Total"] = df["Fundeb_Base"] + df["Compl_VAAF"] + df["Compl_VAAT"] + df["Compl_VAAR"]
+    df["Recursos_Educacao_Ampliados"] = df["Fundeb_Total"] + df["ICMS_Educacional"]
 
-    # Recursos educação ampliados (Fundeb + ICMS Educacional)
-    df["Recursos_Educacao_Ampliados"] = (
-        df["Fundeb_Total"] + df["ICMS_Educacional"]
-    )
+    df["Dep_Fundeb_orcamento"] = df["Fundeb_Total"] / df["Orcamento_Total"]
+    df["Dep_Fundeb_despesa_educ"] = df["Fundeb_Total"] / df["Despesa_Educacao"]
 
-    # Dependência do Fundeb
-    df["Dep_Fundeb_orcamento"] = (
-        df["Fundeb_Total"] / df["Orcamento_Total"]
-    )
-    df["Dep_Fundeb_despesa_educ"] = (
-        df["Fundeb_Total"] / df["Despesa_Educacao"]
-    )
-
-    # Merge com habilitação VAAT 2026 (se existir)
+    # ------------------------------------------------------------------
+    # Merge com habilitação VAAT (se existir)
+    # ------------------------------------------------------------------
     if not df_vaat_hab.empty and "Código IBGE" in df_vaat_hab.columns:
         df_vaat_hab["Código IBGE"] = pd.to_numeric(
             df_vaat_hab["Código IBGE"], errors="coerce"
         ).astype("Int64")
-        df = df.merge(
-            df_vaat_hab[["Código IBGE",
-                         "Veficação  § 4º do art. 13 da  Lei nº 14.113/20"]],
-            on="Código IBGE",
-            how="left"
-        )
-        df.rename(
-            columns={
-                "Veficação  § 4º do art. 13 da  Lei nº 14.113/20":
-                    "Status_VAAT_2026"
-            },
-            inplace=True
-        )
+
+        if "Veficação  § 4º do art. 13 da  Lei nº 14.113/20" in df_vaat_hab.columns:
+            df = df.merge(
+                df_vaat_hab[
+                    ["Código IBGE", "Veficação  § 4º do art. 13 da  Lei nº 14.113/20"]
+                ],
+                on="Código IBGE",
+                how="left",
+            )
+            df.rename(
+                columns={
+                    "Veficação  § 4º do art. 13 da  Lei nº 14.113/20": "Status_VAAT_2026"
+                },
+                inplace=True,
+            )
 
     return df
 
@@ -1172,5 +1109,6 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+
 
 
